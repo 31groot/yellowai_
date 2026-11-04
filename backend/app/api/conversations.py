@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -70,7 +71,7 @@ def get_conversation(conv_id: str, agent: CurrentAgent = Depends(current_agent))
 def claim(conv_id: str, agent: CurrentAgent = Depends(current_agent)):
     cid = _id_or_404(conv_id)
     with get_pool().connection() as conn:
-        won = repo.try_claim(conn, agent.workspace_id, cid, agent.id)
+        won = repo.try_claim(conn, agent.workspace_id, cid, agent.id, datetime.now(timezone.utc))
         detail = _detail(conn, agent, cid)  # 404 if not in this workspace
     if won or (detail.assigned_to and detail.assigned_to.id == agent.id):
         return detail  # claiming something you already own is a no-op success
@@ -84,7 +85,8 @@ def claim(conv_id: str, agent: CurrentAgent = Depends(current_agent)):
 def reply(conv_id: str, body: ReplyIn, agent: CurrentAgent = Depends(current_agent)):
     cid = _id_or_404(conv_id)
     with get_pool().connection() as conn:
-        row = repo.insert_reply(conn, agent.workspace_id, cid, agent.id, body.text)
+        row = repo.insert_reply(conn, agent.workspace_id, cid, agent.id, body.text,
+                               datetime.now(timezone.utc))
         if row is None:
             c = repo.get_conversation(conn, agent.workspace_id, cid)
             if c is None:

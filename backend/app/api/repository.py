@@ -1,4 +1,5 @@
 """All conversation SQL. Every query is scoped by workspace_id taken from the token."""
+from datetime import datetime
 from uuid import UUID
 
 from psycopg import Connection
@@ -62,26 +63,29 @@ def get_messages(conn: Connection, ws: UUID, conv_id: UUID) -> list[dict]:
     ).fetchall()
 
 
-def try_claim(conn: Connection, ws: UUID, conv_id: UUID, me: UUID) -> bool:
+def try_claim(conn: Connection, ws: UUID, conv_id: UUID, me: UUID, at: datetime) -> bool:
     """Atomic compare-and-set. Postgres row locking decides the winner, not timestamps:
     a concurrent second UPDATE waits for the first to commit, re-checks
-    `assigned_agent_id IS NULL` against the new row version, and matches 0 rows."""
+    `assigned_agent_id IS NULL` against the new row version, and matches 0 rows.
+    `at` is only recorded for display/audit; it plays no part in picking the winner."""
     row = conn.execute(
-        """UPDATE conversations SET assigned_agent_id = %s, assigned_at = now()
+        """UPDATE conversations SET assigned_agent_id = %s, assigned_at = %s
            WHERE id = %s AND workspace_id = %s AND assigned_agent_id IS NULL
            RETURNING id""",
-        (me, conv_id, ws),
+        (me, at, conv_id, ws),
     ).fetchone()
     return row is not None
 
 
-def insert_reply(conn: Connection, ws: UUID, conv_id: UUID, me: UUID, text: str) -> dict | None:
+def insert_reply(conn: Connection, ws: UUID, conv_id: UUID, me: UUID, text: str,
+                 at: datetime) -> dict | None:
     """Insert only if *I* am the assignee; the check and the write are one statement."""
     return conn.execute(
-        """INSERT INTO messages (workspace_id, conversation_id, direction, author_agent_id, text, sent_at)
-           SELECT c.workspace_id, c.id, 'outbound', %s, %s, now()
+        """INSERT INTO messages (workspace_id, conversation_id, direction, author_agent_id, text,
+                               sent_at, received_at)
+           SELECT c.workspace_id, c.id, 'outbound', %s, %s, %s, %s
            FROM conversations c
            WHERE c.id = %s AND c.workspace_id = %s AND c.assigned_agent_id = %s
            RETURNING id, direction, text, sent_at, received_at""",
-        (me, text, conv_id, ws, me),
+        (me, text, at, at, conv_id, ws, me),
     ).fetchone()

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import psycopg
 
 from app.api.repository import try_claim
@@ -43,7 +45,7 @@ def test_claim_race_at_sql_level(http, sql):
 
     def claim(i):
         with psycopg.connect(TEST_DSN, autocommit=True) as conn:
-            return try_claim(conn, ws, cid, ids[["Alice", "Bob"][i]])
+            return try_claim(conn, ws, cid, ids[["Alice", "Bob"][i]], datetime.now(timezone.utc))
 
     assert sorted(concurrently(2, claim)) == [False, True]
 

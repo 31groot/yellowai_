@@ -103,10 +103,22 @@ Two status-code choices are deliberate:
 
 5. **Ordering.** Threads sort by `sent_at, received_at, id`. That's the customer's send time, with arrival order only as a tie-break. The queue's "last message" is also chosen by `sent_at`. `waiting_since` is the oldest customer message sent after the last agent reply.
 
+6. **Time is stamped by the app, never the database.** The schema has no `now()` or default timestamps, and a test checks this.
+   - The webhook handler stamps `received_at` once, when the request arrives.
+   - That one value is written to both the message and the `webhook_deliveries` row that stored it, and the two rows point at each other: `messages.webhook_delivery_id` ↔ `webhook_deliveries.message_id`.
+   - Duplicate deliveries also point at the original message, each with its own arrival time.
+   - `sent_at` is the customer's time from the provider and is never overwritten.
+   ```sql
+   -- every delivery of a message, in arrival order
+   SELECT d.id, d.outcome, d.received_at, m.text, m.sent_at
+   FROM webhook_deliveries d JOIN messages m ON m.id = d.message_id
+   WHERE m.external_message_id = 'm-1' ORDER BY d.received_at;
+   ```
+
 ## Tests
 
 ```bash
-make test        # 60 tests, ~2s, against inbox_test (schema is recreated each run)
+make test        # 66 tests, ~2s, against inbox_test (schema is recreated each run)
 ```
 
 The three required proofs:
@@ -133,6 +145,7 @@ Edge cases also covered:
 - malformed IDs and SQL-ish IDs (404, never 500)
 - every bad `Authorization` shape
 - the DB rejecting a cross-workspace assignee
+- each message mapped to its delivery with an identical `received_at`; duplicates point at the original
 - re-claiming your own conversation, and replies from a non-assignee or on an unassigned conversation
 
 ## How you'd tell it's broken
@@ -160,6 +173,9 @@ WHERE m.workspace_id <> c.workspace_id;
 -- outbound reply by someone who isn't the assignee
 SELECT m.id FROM messages m JOIN conversations c ON c.id = m.conversation_id
 WHERE m.direction = 'outbound' AND m.author_agent_id <> c.assigned_agent_id;
+-- inbound message not matching the delivery that stored it
+SELECT m.id FROM messages m LEFT JOIN webhook_deliveries d ON d.id = m.webhook_delivery_id
+WHERE m.direction = 'inbound' AND (d.id IS NULL OR d.received_at <> m.received_at);
 -- conversations with no messages (an aborted webhook leaked a row)
 SELECT c.id FROM conversations c WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id);
 ```
@@ -176,4 +192,4 @@ SELECT c.id FROM conversations c WHERE NOT EXISTS (SELECT 1 FROM messages m WHER
 - **HMAC over the raw body** (e.g. `X-Signature: sha256=…` plus a timestamp to block replays) instead of a static shared secret. That also proves the body wasn't tampered with.
 - **Server-Sent Events** or `?since=` incremental polling instead of re-fetching whole lists every 3s.
 - **Unassign / transfer**, and a queue that orders by service-level target.
-- **Outbound `sent_at` is the server's `now()`.** If the provider's clock runs ahead of ours, a reply can sort before the message it answers. A real system would deliver outbound messages through the provider and use its timestamp.
+- **Outbound `sent_at` is the app server's clock.** If the provider's clock runs ahead of ours, a reply can sort before the message it answers. A real system would deliver outbound messages through the provider and use its timestamp.

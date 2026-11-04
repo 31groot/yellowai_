@@ -51,10 +51,11 @@ def demo_data(dsn: str) -> None:
     with p.connection() as conn:
         for ws, conv, name, texts, minutes_ago in samples:
             for i, text in enumerate(texts):
+                sent = now - timedelta(minutes=minutes_ago) + timedelta(seconds=20 * i)
                 handle_inbound(conn, InboundMessage(
                     workspace=ws, conversation_id=conv, message_id=f"{conv}-m{i}",
                     customer_name=name, text=text,
-                    sent_at=now - timedelta(minutes=minutes_ago) + timedelta(seconds=20 * i)))
+                    sent_at=sent), received_at=sent + timedelta(seconds=1))
     pool.close_pool()
 
 
