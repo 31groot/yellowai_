@@ -91,7 +91,7 @@ Two status-code choices are deliberate:
 
 3. **Claim races.** The claim is one compare-and-set statement:
    ```sql
-   UPDATE conversations SET assigned_agent_id = :me, assigned_at = now()
+   UPDATE conversations SET assigned_agent_id = :me, assigned_at = :now  -- :now from the app
    WHERE id = :id AND workspace_id = :ws AND assigned_agent_id IS NULL RETURNING id
    ```
    - The second concurrent UPDATE waits on the row lock. After the first commits, it re-checks `assigned_agent_id IS NULL` against the new row and matches nothing.
